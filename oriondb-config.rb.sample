@@ -1,0 +1,34 @@
+# config
+class OrionDB_config
+  
+  attr_reader :DB_TYPE, :DB_USERNAME, :DB_PASSWORD, :DB_HOST, :DB_DBNAME, :Config_filtering
+
+   ## DBtype
+   # Options are mysql, postgres, sqlite, ado
+   DB_TYPE = "mysql"
+
+   #Username and password to connect with  
+   DB_USERNAME = "username" 
+   DB_PASSWORD = "password"
+   
+   #host and database to connect to
+   DB_HOST = "localhost"
+   DB_DBNAME = "dbname"
+   
+   #what url OrionDB-Ruby must remove to get to the resource name
+   #so, if you have /resources/contact, put /resources/ in here
+   ORIONDB_URL = "/" 
+
+   ##Filtering
+   # OrionDB-Ruby provides a way to filter on specific fields in tables
+   # the format you can use is
+   # c[:tablename] = ["fieldname", "fieldname"]
+   # and the specific fieldname is omitted from the results 
+   # Very useful for filtering out password fields
+
+    Config_filtering = Hash[
+      :tablename => ["fieldname1","fieldname2"],
+      :user => ["password"]
+    ]
+  
+end

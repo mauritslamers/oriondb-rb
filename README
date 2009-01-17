@@ -1,0 +1,14 @@
+OrionDB-rb
+
+A ruby version of the OrionDB PHP transparency layer for Sproutcore.
+
+Installation instructions will become available when it is more or less finished
+
+Dependencies: rubygems, sequel, rack, cgi
+
+Can be used together with apache using the mod_proxy module which forwards
+the request to OrionDB-rb without the application noticing. (Reverse Proxy)
+
+Will probably be available under MIT licence
+
+
