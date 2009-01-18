@@ -1,9 +1,8 @@
 #!/usr/bin/env ruby
 
 %w(rubygems rack).each { |dep| require dep } 
-
-require "json"
-require "json/add/core"
+require "json/ext"
+#require "json/add/core"
 require "sequel"
 require "oriondb"
 
@@ -22,30 +21,29 @@ class OrionDB_REST
     return ret
   end
 
-  def process(method,resource,conditions)
-    # remove prepended slash from resource
-    if(method == "GET")
-      result = @ORIONDB.process_get(resource,conditions)
-    end
-    if(result)
-      body = method + " " + resource + " " + conditions + "\n" + result
-    else
-      body = method + " " + resource + " " + conditions + "\n" + "Geen resultaat"
-    end
-    [200, {"Content-Type" => "text/plain"}, body ]
-  end
 
   def call(env)
     @current_environment = env
     # find out: GET/POST/PUT/DELETE
+    # remove prepended slash from resource
     method = env['REQUEST_METHOD']
     resource = env['REQUEST_PATH']
     conditions = env['QUERY_STRING']
-    process(method,resource,conditions)
+    request = Rack::Request.new(env)
+    result = @ORIONDB.get(request) if request.get?
+    result = @ORIONDB.post(request) if request.post?
+    result = @ORIONDB.put(request) if request.put?
+    result = @ORIONDB.delete(request) if request.delete?
+    if(result)
+      #body = method + " " + resource + " " + conditions + "\n" + result
+      body = result
+    else
+      #body = method + " " + resource + " " + conditions + "\n" + "Geen resultaat"
+    end
+    [200, {"Content-Type" => "text/plain"}, body ]
+    #[200, {"Content-Type" => "text/plain"}, returnenv(env) ]
   end
 end
-
-#OrionDB = OrionDB_class.new
 
 app = Rack::Builder.new { 
   use Rack::CommonLogger 
