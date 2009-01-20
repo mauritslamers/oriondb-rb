@@ -1,5 +1,16 @@
 require "oriondb-config"
-require "cgi"
+#require "cgi"
+
+require "json/ext"
+
+#overriding DateTime to force the correct 
+#format: "date":"2008-10-26 23:44:25"
+class DateTime
+  def self.to_s # 4p
+    format('%.4d-%02d-%02d %02d:%02d:%02d',
+	   year, mon, mday, hour, min, sec)
+  end
+end
 
 class OrionDB  
   # default functions
@@ -32,7 +43,11 @@ class OrionDB
     #load all tables and create an array of datasets 
     @Datasets = Hash.new
     puts "Loading tables..."
-    @DB.tables.each { |tablename| @Datasets[tablename] = @DB[tablename]; }
+    @DataModels = Hash.new
+    @DB.tables.each do |tablename| 
+      @Datasets[tablename] = @DB[tablename]
+      @DataModels[tablename] = Sequel::Model(tablename)
+    end
     puts "Ready for action!"
   end
 
@@ -53,10 +68,10 @@ class OrionDB
     ## Get request: 
     ## add fields refreshURL, updateURL and destroyURL to the record
     ## filter out the unwanted fields as configured in the config file
-    currentid = record['id']
+    currentid = record[:id]
     record['type'] = resource
-    url = "#{@URL}#{resource}/#{currentid}"
-    record['refreshURL'] = record['updateURL'] = record['destroyURL'] = url
+    resource_url = "#{@URL}#{resource}/#{currentid}"
+    record['refreshURL'] = record['updateURL'] = record['destroyURL'] = resource_url
     #apply filter
     filtered_record = filterfields(record, resource)
     return filtered_record
@@ -64,8 +79,9 @@ class OrionDB
 
   def add_type_and_resource_fields(data, resource)
     ##wrapper for addfields
-    data.each { |rec| addfields(rec,resource)  }
-    return data
+    # data is a array of models
+    newdata = data.collect { |model| addfields(model.values,resource) }
+    return newdata
   end
   
   def wrap_for_SC(data)
@@ -115,7 +131,7 @@ class OrionDB
   def get(request)
     #a get can mean listFor or refresh
     #URL scheme: @URL/resourcename/id        
-
+    #puts "We're doing a GET!"
     #ret = "Request.GET: " + request.GET.to_s + "\n"
     #ret += "Request.path_info: " + request.path_info.to_s + "\n"
     #ret += "Request.params:" + request.params.to_s + "\n" 
@@ -124,23 +140,29 @@ class OrionDB
     if(path_array.length>0)
        resource = path_array[0] # get resource 
        if @DB.table_exists?(resource)
-         result = @Datasets[resource.intern]
-         if(result)
+         model = @DataModels[resource.intern]
+         if(model)
            if(path_array.length>1)
               #an id has been given so no extra GET parameters are accepted or used
-              tempresult = result.filter(:id => path_array[1])
-              records=tempresult.all
-              data = addfields(records[0],resource)   
+              tempmodel = model.new({:id => path_array[1]}, true)
+              #tempresult = tempmodel(:id => path_array[1])
+              #tempresult = tempmodel.dataset
+              #records=tempresult.all
+              record = tempmodel.this.all[0]
+              data = addfields(record,resource)   
+              #puts data.inspect
               return data.to_json
+              #return tempresult.inspect
            else
               #check for get parameters like order
               if(request.GET.length>0)
                 #only order field is allowed
-                tempresult = result.order(request.GET['order'])
-                puts tempresult.sql
+                tempresult = model.dataset.order(request.GET['order'].intern)
+                #puts tempresult.sql
                 records = tempresult.all
               else
-                records=result.all
+                records=model.dataset.all
+                #puts records.inspect
               end
               data = add_type_and_resource_fields(records,resource)
               wrap_for_SC(data).to_json
@@ -153,6 +175,7 @@ class OrionDB
   end
   
   def post(request)
+      #puts "We're doing a POST!"
     #post means create
     #post needs both a post body as an url
     path_array = getpatharray(request)
@@ -161,23 +184,26 @@ class OrionDB
       resource = path_array[0]
       if(@DB.table_exists?(resource))
         #only do anything if the table exists
-        dataset = @Datasets[resource.intern]
+        model = @DataModels[resource.intern]
         #parse json in post
         postdata = JSON.parse(request.POST)
+        #get old guid
+        old_guid = postdata['_guid']
         #update keys to symbols
         json_decoded_interns = internalize_keys(postdata)
-        
-        new_id = dataset.insert(json_decoded_interns)
+        record = model.create(json_decoded_interns)
         #now return the record
-        newrecordset = dataset.filter(:id => new_id)
-        newrecord = newrecordset.all
-        #add additional fields and convert to json 
-        response = add_type_and_resource_fields(newrecord).to_json
+        if(record)
+          values = addfields(filterfields(record.values,resource),resource)
+          values['_guid'] = old_guid
+          values.to_json
+        end
       end
     end
   end
   
   def put(request)
+    #puts "We're doing a PUT!"
     #Put means update an existing record
     #ret = "GET: " + request.GET.to_s + "\n"
     #ret += "POST: " + request.POST.to_s + "\n"
@@ -188,8 +214,9 @@ class OrionDB
       #take both the resource as the id
       resource = path_array[0]
       id = path_array[1]
-      recordset = recordbyid_exists?(resource,id)
-      if(record)
+      model = @DataModels[resource.intern]
+      model_with_id = model.new({:id => path_array[1]}, true)
+      if(model_with_id)
          contents =  Rack::Utils.unescape(request.body.string) ## unescape the PUT body
          # contents has the format records=json_encoded object so split to get the json
          splitcontents = contents.split("=")
@@ -198,8 +225,17 @@ class OrionDB
          #internalize keys, but keep in mind json_decoded is an array with one hash element
          json_decoded_interns = internalize_keys(json_decoded[0])
          #filter to prevent overwriting protected fields
-         data_to_update = filterfields(json_decoded_interns)
-         recordset.update(data_to_update)
+         data_to_update = filterfields(json_decoded_interns,resource)
+         # also get rid of the id field before saving
+         data_to_update.delete(:id)
+         #puts "Saving data: " + data_to_update.inspect
+         model_with_id.update(data_to_update)
+         #return stuff?
+         recordset = model_with_id.dataset.all[0]
+         datatoreturn = addfields(recordset.values,resource)   
+         #puts data.inspect
+         return datatoreturn.to_json
+         #return model_with_id.values.to_json
       end     
     end
      
@@ -208,6 +244,7 @@ class OrionDB
   end
 
   def delete(request)
+      #puts "We're doing a DELETE!"
     #delete means deleting an existing record
   end
 end
